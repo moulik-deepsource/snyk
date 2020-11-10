@@ -68,7 +68,7 @@ export interface ArgsOptions {
   // (see the snyk-mvn-plugin or snyk-gradle-plugin)
   _doubleDashArgs: string[];
   _: MethodArgs;
-  [key: string]: boolean | string | MethodArgs | string[]; // The two last types are for compatibility only
+  [key: string]: boolean | string | number | MethodArgs | string[]; // The two last types are for compatibility only
 }
 
 export function args(rawArgv: string[]): Args {
@@ -219,6 +219,14 @@ export function args(rawArgv: string[]): Args {
       argv[camelCased] = argv[dashedArg];
       delete argv[dashedArg];
     }
+  }
+
+  if (argv.detectionDepth !== undefined) {
+    if (!/\d+/.test(String(argv.detectionDepth))) {
+      // TODO: Real error handling
+      throw new Error('Unsupported value for --detection-depth flag');
+    }
+    argv.detectionDepth = Number(argv.detectionDepth);
   }
 
   if (argv.skipUnresolved !== undefined) {
