@@ -124,6 +124,11 @@ describe('ecosystems', () => {
               identity: {
                 type: 'cpp',
               },
+              name: expect.any(String),
+              target: {
+                branch: expect.any(String),
+                remoteUrl: expect.any(String),
+              },
             },
           },
           headers: {
@@ -173,6 +178,11 @@ describe('ecosystems', () => {
               ],
               identity: {
                 type: 'cpp',
+              },
+              name: expect.any(String),
+              target: {
+                branch: expect.any(String),
+                remoteUrl: expect.any(String),
               },
             },
           },
