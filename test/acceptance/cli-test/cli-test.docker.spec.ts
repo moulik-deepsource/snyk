@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { AcceptanceTests } from './cli-test.acceptance.test';
+import * as analytics from '../../../src/lib/analytics';
 
 export const DockerTests: AcceptanceTests = {
   language: 'Docker',
@@ -29,10 +30,23 @@ export const DockerTests: AcceptanceTests = {
         t,
       );
 
+      const spyAnalytics = sinon.spy(analytics, 'add');
+
       await params.cli.test('foo:latest', {
         docker: true,
         org: 'explicit-org',
       });
+
+      t.ok(
+        spyAnalytics.calledWith('depGraph', true),
+        'analytics track depGraph',
+      );
+      t.ok(
+        spyAnalytics.calledWith('isDocker', true),
+        'analytics track isDocker',
+      );
+      spyAnalytics.restore();
+
       const req = params.server.popRequest();
       t.equal(req.method, 'POST', 'makes POST request');
       t.equal(
@@ -102,7 +116,6 @@ export const DockerTests: AcceptanceTests = {
         },
         t,
       );
-
       await params.cli.test('foo:latest', {
         docker: true,
         org: 'explicit-org',
