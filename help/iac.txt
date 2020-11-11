@@ -11,6 +11,9 @@ Commands:
 Options:
 
   -h, --help
+  --detection-depth=<number>
+                       (test command only)
+                       Use to indicate how many sub-directories to search. By default all subdirectories will be searched.
   --json .................................. Return results in JSON format.
   --json-file-output=<string>
                        (test command only)
