@@ -1,4 +1,4 @@
-import * as _ from 'lodash';
+const sortBy = require('lodash.sortby');
 import {
   mapIacTestResult,
   AnnotatedIacIssue,
@@ -208,8 +208,8 @@ export function iacTestJsonAssertions(
   t.equal(results.cloudConfigResults, undefined);
   if (foundIssues) {
     t.deepEqual(
-      _.sortBy(results.infrastructureAsCodeIssues, 'id'),
-      _.sortBy(expectedResults.infrastructureAsCodeIssues, 'id'),
+      sortBy(results.infrastructureAsCodeIssues, 'id'),
+      sortBy(expectedResults.infrastructureAsCodeIssues, 'id'),
       'issues are the same',
     );
   } else {
@@ -267,6 +267,11 @@ export function iacTestSarifAssertions(
     const messageText = `This line contains a potential ${expectedIssue.severity} severity misconfiguration affecting the Kubernetes ${expectedIssue.subType}`;
     t.deepEqual(sarifIssue.message.text, messageText, 'issue message is ok');
     t.deepEqual(
+      sarifIssue.locations![0]!.physicalLocation!.artifactLocation!.uri,
+      'iac-kubernetes/multi-file.yaml',
+      'issue uri is ok',
+    );
+    t.deepEqual(
       sarifIssue.locations![0].physicalLocation!.region!.startLine,
       expectedIssue.lineNumber,
       'issue message is ok',
@@ -276,6 +281,7 @@ export function iacTestSarifAssertions(
 
 function generateDummyIssue(severity): AnnotatedIacIssue {
   return {
+    iacDescription: { issue: '', impact: '', resolve: '' },
     id: 'SNYK-CC-K8S-1',
     title: 'Reducing the admission of containers with dropped capabilities',
     name: 'Reducing the admission of containers with dropped capabilities',
@@ -298,9 +304,10 @@ function generateDummyIssue(severity): AnnotatedIacIssue {
 }
 
 function generateDummyTestData(
-  cloudConfigResults: Array<AnnotatedIacIssue>,
+  cloudConfigResults: AnnotatedIacIssue[],
 ): IacTestResponse {
   return {
+    path: '',
     targetFile: '',
     projectName: '',
     displayTargetFile: '',

@@ -1,16 +1,14 @@
 export = test;
 
-import * as _ from 'lodash';
+const cloneDeep = require('lodash.clonedeep');
+const assign = require('lodash.assign');
 import chalk from 'chalk';
 import * as snyk from '../../../lib';
-import * as config from '../../../lib/config';
 import { isCI } from '../../../lib/is-ci';
-import { apiTokenExists, getDockerToken } from '../../../lib/api-token';
 import * as Debug from 'debug';
 import * as pathLib from 'path';
 import {
   Options,
-  ShowVulnPaths,
   SupportedProjectTypes,
   TestOptions,
 } from '../../../lib/types';
@@ -23,7 +21,6 @@ import {
   mapIacTestResult,
 } from '../../../lib/snyk-test/iac-test-result';
 
-import { FailOnError } from '../../../lib/errors/fail-on-error.ts';
 import {
   dockerRemediationForDisplay,
   formatTestMeta,
@@ -43,7 +40,7 @@ import {
   TEST_SUPPORTED_IAC_PROJECTS,
 } from '../../../lib/iac/constants';
 import { hasFixes, hasPatches, hasUpgrades } from './vuln-helpers';
-import { FAIL_ON, FailOn, SEVERITIES } from '../../../lib/snyk-test/common';
+import { FailOn } from '../../../lib/snyk-test/common';
 import {
   createErrorMappedResultsForJsonOutput,
   dockerUserCTA,
@@ -51,115 +48,65 @@ import {
   getDisplayedOutput,
 } from './formatters/format-test-results';
 
+import * as iacLocalExecution from './iac-local-execution';
+import { validateCredentials } from './validate-credentials';
+import { generateSnykTestError } from './generate-snyk-test-error';
+import { validateTestOptions } from './validate-test-options';
+import { setDefaultTestOptions } from './set-default-test-options';
+import { processCommandArgs } from '../process-command-args';
+
 const debug = Debug('snyk-test');
 const SEPARATOR = '\n-------------------------------------------------------\n';
-
-const showVulnPathsMapping: Record<string, ShowVulnPaths> = {
-  false: 'none',
-  none: 'none',
-  true: 'some',
-  some: 'some',
-  all: 'all',
-};
 
 // TODO: avoid using `as any` whenever it's possible
 
 async function test(...args: MethodArgs): Promise<TestCommandResult> {
-  const resultOptions = [] as any[];
-  const results = [] as any[];
-  let options = ({} as any) as Options & TestOptions;
-
-  if (typeof args[args.length - 1] === 'object') {
-    options = (args.pop() as any) as Options & TestOptions;
-  }
-
-  // populate with default path (cwd) if no path given
-  if (args.length === 0) {
-    args.unshift(process.cwd());
-  }
-  // org fallback to config unless specified
-  options.org = options.org || config.org;
-
-  // making `show-vulnerable-paths` 'some' by default.
-  const svpSupplied = (options['show-vulnerable-paths'] || '').toLowerCase();
-  options.showVulnPaths = showVulnPathsMapping[svpSupplied] || 'some';
-
-  if (
-    options.severityThreshold &&
-    !validateSeverityThreshold(options.severityThreshold)
-  ) {
-    return Promise.reject(new Error('INVALID_SEVERITY_THRESHOLD'));
-  }
-
-  if (options.failOn && !validateFailOn(options.failOn)) {
-    const error = new FailOnError();
-    return Promise.reject(chalk.red.bold(error.message));
-  }
-
-  try {
-    apiTokenExists();
-  } catch (err) {
-    if (options.docker && getDockerToken()) {
-      options.testDepGraphDockerEndpoint = '/docker-jwt/test-dependencies';
-      options.isDockerUser = true;
-    } else {
-      throw err;
-    }
-  }
+  const { options: originalOptions, paths } = processCommandArgs(...args);
+  const options = setDefaultTestOptions(originalOptions);
+  validateTestOptions(options);
+  validateCredentials(options);
 
   const ecosystem = getEcosystemForTest(options);
   if (ecosystem) {
     try {
-      const commandResult = await testEcosystem(
-        ecosystem,
-        args as string[],
-        options,
-      );
+      const commandResult = await testEcosystem(ecosystem, paths, options);
       return commandResult;
     } catch (error) {
-      throw new Error(error);
+      if (error instanceof Error) {
+        throw error;
+      } else {
+        throw new Error(error);
+      }
     }
   }
 
+  const resultOptions: Array<Options & TestOptions> = [];
+  const results = [] as any[];
+
   // Promise waterfall to test all other paths sequentially
-  for (const path of args as string[]) {
+  for (const path of paths) {
     // Create a copy of the options so a specific test can
     // modify them i.e. add `options.file` etc. We'll need
     // these options later.
-    const testOpts = _.cloneDeep(options);
+    const testOpts = cloneDeep(options);
     testOpts.path = path;
     testOpts.projectName = testOpts['project-name'];
 
     let res: (TestResult | TestResult[]) | Error;
 
     try {
-      res = await snyk.test(path, testOpts);
+      if (options.iac && options.experimental) {
+        // this path is an experimental feature feature for IaC which does issue scanning locally without sending files to our Backend servers.
+        // once ready for GA, it is aimed to deprecate our remote-processing model, so IaC file scanning in the CLI is done locally.
+        res = await iacLocalExecution.test(path, testOpts);
+      } else {
+        res = await snyk.test(path, testOpts);
+      }
       if (testOpts.iacDirFiles) {
         options.iacDirFiles = testOpts.iacDirFiles;
       }
     } catch (error) {
-      // Possible error cases:
-      // - the test found some vulns. `error.message` is a
-      // JSON-stringified
-      //   test result.
-      // - the flow failed, `error` is a real Error object.
-      // - the flow failed, `error` is a number or string
-      // describing the problem.
-      //
-      // To standardise this, make sure we use the best _object_ to
-      // describe the error.
-
-      if (error instanceof Error) {
-        res = error;
-      } else if (typeof error !== 'object') {
-        res = new Error(error);
-      } else {
-        try {
-          res = JSON.parse(error.message);
-        } catch (unused) {
-          res = error;
-        }
-      }
+      res = generateSnykTestError(error);
     }
 
     // Not all test results are arrays in order to be backwards compatible
@@ -172,16 +119,14 @@ async function test(...args: MethodArgs): Promise<TestCommandResult> {
         path,
         resArray[i],
       );
-      results.push(
-        _.assign(resArray[i], { path: pathWithOptionalProjectName }),
-      );
+      results.push(assign(resArray[i], { path: pathWithOptionalProjectName }));
       // currently testOpts are identical for each test result returned even if it's for multiple projects.
       // we want to return the project names, so will need to be crafty in a way that makes sense.
       if (!testOpts.projectNames) {
         resultOptions.push(testOpts);
       } else {
         resultOptions.push(
-          _.assign(_.cloneDeep(testOpts), {
+          assign(cloneDeep(testOpts), {
             projectName: testOpts.projectNames[i],
           }),
         );
@@ -250,19 +195,22 @@ async function test(...args: MethodArgs): Promise<TestCommandResult> {
       err.jsonNoVulns = dataToSendNoVulns;
     }
 
+    if (notSuccess) {
+      // Take the code of the first problem to go through error
+      // translation.
+      // Note: this is done based on the logic done below
+      // for non-json/sarif outputs, where we take the code of
+      // the first error.
+      err.code = errorResults[0].code;
+    }
     err.json = stringifiedData;
     err.jsonStringifiedResults = stringifiedJsonData;
     err.sarifStringifiedResults = stringifiedSarifData;
     throw err;
   }
 
-  const pinningSupported: LegacyVulnApiResult = results.find(
-    (res) => res.packageManager === 'pip',
-  );
-
   let response = results
     .map((result, i) => {
-      resultOptions[i].pinningSupported = pinningSupported;
       return displayResult(
         results[i] as LegacyVulnApiResult,
         resultOptions[i],
@@ -364,14 +312,6 @@ function shouldFail(vulnerableResults: any[], failOn: FailOn) {
   }
   // should fail by default when there are vulnerable results
   return vulnerableResults.length > 0;
-}
-
-function validateSeverityThreshold(severityThreshold) {
-  return SEVERITIES.map((s) => s.verboseName).indexOf(severityThreshold) > -1;
-}
-
-function validateFailOn(arg: FailOn) {
-  return Object.keys(FAIL_ON).includes(arg);
 }
 
 function displayResult(

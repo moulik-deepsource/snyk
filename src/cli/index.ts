@@ -40,6 +40,7 @@ import {
   SupportedUserReachableFacingCliArgs,
 } from '../lib/types';
 import { SarifFileOutputEmptyError } from '../lib/errors/empty-sarif-output-error';
+import { InvalidDetectionDepthValue } from '../lib/errors/invalid-detection-depth-value';
 
 const debug = Debug('snyk');
 const EXIT_CODES = {
@@ -51,7 +52,7 @@ const EXIT_CODES = {
 async function runCommand(args: Args) {
   const commandResult = await args.method(...args.options._);
 
-  const res = analytics({
+  const res = analytics.addDataAndSend({
     args: args.options._,
     command: args.command,
     org: args.options.org,
@@ -75,9 +76,9 @@ async function runCommand(args: Args) {
   // also save the json (in error.json) to file if option is set
   if (args.command === 'test') {
     const jsonResults = (commandResult as TestCommandResult).getJsonResult();
-    saveResultsToFile(args.options, 'json', jsonResults);
+    await saveResultsToFile(args.options, 'json', jsonResults);
     const sarifResults = (commandResult as TestCommandResult).getSarifResult();
-    saveResultsToFile(args.options, 'sarif', sarifResults);
+    await saveResultsToFile(args.options, 'sarif', sarifResults);
   }
 
   return res;
@@ -105,7 +106,10 @@ async function handleError(args, error) {
   if (args.options.debug && !args.options.json) {
     const output = vulnsFound ? error.message : error.stack;
     console.log(output);
-  } else if (args.options.json) {
+  } else if (
+    args.options.json &&
+    !(error instanceof UnsupportedOptionCombinationError)
+  ) {
     console.log(stripAnsi(error.json || error.stack));
   } else {
     if (!args.options.quiet) {
@@ -124,8 +128,8 @@ async function handleError(args, error) {
     }
   }
 
-  saveResultsToFile(args.options, 'json', error.jsonStringifiedResults);
-  saveResultsToFile(args.options, 'sarif', error.sarifStringifiedResults);
+  await saveResultsToFile(args.options, 'json', error.jsonStringifiedResults);
+  await saveResultsToFile(args.options, 'sarif', error.sarifStringifiedResults);
 
   const analyticsError = vulnsFound
     ? {
@@ -152,7 +156,7 @@ async function handleError(args, error) {
     analytics.add('command', args.command);
   }
 
-  const res = analytics({
+  const res = analytics.addDataAndSend({
     args: args.options._,
     command,
     org: args.options.org,
@@ -170,7 +174,7 @@ function getFullPath(filepathFragment: string): string {
   }
 }
 
-function saveJsonResultsToFile(
+async function saveJsonResultsToFile(
   stringifiedJson: string,
   jsonOutputFile: string,
 ) {
@@ -188,17 +192,19 @@ function saveJsonResultsToFile(
   const dirPath = pathLib.dirname(jsonOutputFile);
   const createDirSuccess = createDirectory(dirPath);
   if (createDirSuccess) {
-    writeContentsToFileSwallowingErrors(jsonOutputFile, stringifiedJson);
+    await writeContentsToFileSwallowingErrors(jsonOutputFile, stringifiedJson);
   }
 }
 
 function checkRuntime() {
   if (!runtime.isSupported(process.versions.node)) {
     console.error(
-      `${process.versions.node} is an unsupported nodejs ` +
+      `Node.js version ${process.versions.node} is an unsupported Node.js ` +
         `runtime! Supported runtime range is '${runtime.supportedRange}'`,
     );
-    console.error('Please upgrade your nodejs runtime version and try again.');
+    console.error(
+      'Please upgrade your Node.js runtime. The last version of Snyk CLI that supports Node.js v8 is v1.454.0.',
+    );
     process.exit(EXIT_CODES.ERROR);
   }
 }
@@ -245,6 +251,20 @@ async function main() {
           '—json only to get your image vulnerabilties, excluding the application ones.',
       ]);
     }
+    if (args.options['group-issues'] && args.options['iac']) {
+      throw new UnsupportedOptionCombinationError([
+        '--group-issues is currently not supported for Snyk IaC.',
+      ]);
+    }
+    if (
+      args.options['group-issues'] &&
+      !args.options['json'] &&
+      !args.options['json-file-output']
+    ) {
+      throw new UnsupportedOptionCombinationError([
+        'JSON output is required to use --group-issues, try adding --json.',
+      ]);
+    }
 
     if (
       args.options.file &&
@@ -260,6 +280,14 @@ async function main() {
       sln.updateArgs(args);
     } else if (typeof args.options.file === 'boolean') {
       throw new FileFlagBadInputError();
+    }
+
+    if (
+      typeof args.options.detectionDepth !== 'undefined' &&
+      (args.options.detectionDepth <= 0 ||
+        Number.isNaN(args.options.detectionDepth))
+    ) {
+      throw new InvalidDetectionDepthValue();
     }
 
     validateUnsupportedSarifCombinations(args);
@@ -411,7 +439,7 @@ function validateUnsupportedSarifCombinations(args) {
   }
 }
 
-function saveResultsToFile(
+async function saveResultsToFile(
   options: ArgsOptions,
   outputType: string,
   jsonResults: string,
@@ -421,7 +449,7 @@ function saveResultsToFile(
   if (outputFile && jsonResults) {
     const outputFileStr = outputFile as string;
     const fullOutputFilePath = getFullPath(outputFileStr);
-    saveJsonResultsToFile(stripAnsi(jsonResults), fullOutputFilePath);
+    await saveJsonResultsToFile(stripAnsi(jsonResults), fullOutputFilePath);
   }
 }
 

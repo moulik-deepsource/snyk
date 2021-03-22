@@ -35,3 +35,10 @@ restore_is_ci_flags() {
   if [ -n "${CI}" ]; then CI=$CI_BACKUP_VALUE; unset CI_BACKUP_VALUE; fi
   if [ -n "${CIRCLECI}" ]; then CIRCLECI=$CIRCLECI_BACKUP_VALUE; unset CIRCLECI_BACKUP_VALUE; fi
 }
+
+check_if_regression_test() { ! [ "${REGRESSION_TEST}" = "1" ]; }
+
+check_auth_output() {
+  printf %s "$1" | grep -F -e "To authenticate your account, open the below URL in your browser." -e "Now redirecting you to our auth page, go ahead and log in," > /dev/null
+  echo $?
+}

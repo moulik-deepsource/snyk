@@ -13,20 +13,21 @@ export type DepTree = legacyApi.DepTree;
 export type ShowVulnPaths = 'none' | 'some' | 'all';
 
 export interface TestOptions {
-  traverseNodeModules: boolean;
-  interactive: boolean;
+  traverseNodeModules?: boolean;
   pruneRepeatedSubdependencies?: boolean;
   showVulnPaths: ShowVulnPaths;
   failOn?: FailOn;
   reachableVulns?: boolean;
   reachableVulnsTimeout?: number;
+  initScript?: string;
   yarnWorkspaces?: boolean;
   testDepGraphDockerEndpoint?: string | null;
   isDockerUser?: boolean;
   iacDirFiles?: IacFileInDirectory[];
 }
 
-export interface WizardOptions {
+export interface ProtectOptions {
+  interactive?: boolean;
   newPolicy: boolean;
 }
 
@@ -47,6 +48,7 @@ export interface Options {
   path: string;
   docker?: boolean;
   iac?: boolean;
+  code?: boolean;
   source?: boolean; // C/C++ Ecosystem Support
   file?: string;
   policy?: string;
@@ -76,6 +78,7 @@ export interface Options {
   'app-vulns'?: boolean;
   debug?: boolean;
   sarif?: boolean;
+  'group-issues'?: boolean;
 }
 
 // TODO(kyegupov): catch accessing ['undefined-properties'] via noImplicitAny
@@ -99,6 +102,7 @@ export interface MonitorOptions {
   'app-vulns'?: boolean;
   reachableVulns?: boolean;
   reachableVulnsTimeout?: number;
+  initScript?: string;
   yarnWorkspaces?: boolean;
 }
 
@@ -178,8 +182,10 @@ export type SupportedUserReachableFacingCliArgs =
   | 'reachable-vulns'
   | 'reachable-timeout'
   | 'reachable-vulns-timeout'
+  | 'init-script'
   | 'integration-name'
-  | 'integration-version';
+  | 'integration-version'
+  | 'show-vulnerable-paths';
 
 export enum SupportedCliCommands {
   version = 'version',
